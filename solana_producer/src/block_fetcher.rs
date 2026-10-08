@@ -1,3 +1,13 @@
+// File: solana_producer/src/block_fetcher.rs
+
+//! Bounded concurrent RPC block poller with exponential backoff and consensus-aware error decoding.
+//! 
+//! This module decouples the slot discovery layer from the ingestion loop by processing slots 
+//! concurrently across multiple tokio task actors using bounded MPSC channels. It explicitly handles
+//! Solana-specific ledger gaps (skipped slots, ledger cleanups) via internal JSON-RPC error mapping 
+//! to prevent data ingestion pipeline stalls.
+
+
 use std::sync::Arc;
 
 use solana_client::{
