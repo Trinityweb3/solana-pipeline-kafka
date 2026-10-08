@@ -1,0 +1,73 @@
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: solana_kafka
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@solana_kafka:9093"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://solana_kafka:9092,EXTERNAL://localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx1g"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  kafka_init:
+    image: apache/kafka:3.9.0
+    container_name: solana_kafka_init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - "/opt/kafka/bin/kafka-topics.sh --bootstrap-server solana_kafka:9092 --create --if-not-exists --topic solana.transfers.v1 --partitions 1 --replication-factor 1"
+
+  solana_producer:
+    build: ./solana_producer
+    container_name: solana_producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka_init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: "solana_kafka:9092"
+      KAFKA_TOPIC: "solana.transfers.v1"
+      SOLANA_HTTP_URL: "https://api.mainnet-beta.solana.com"
+      SOLANA_COMMITMENT: "confirmed"
+      RUST_LOG: "info"
+    restart: unless-stopped
+
+  solana_consumer:
+    build: ./solana_consumer
+    container_name: solana_consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka_init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: "solana_kafka:9092"
+      KAFKA_TOPIC: "solana.transfers.v1"
+      KAFKA_GROUP_ID: "solana.whale.filter.v1"
+      WHALE_FILE_PATH: "/data/whale_transfers.jsonl"
+      WHALE_LAMPORTS_THRESHOLD: "10000000000"
+      RUST_LOG: "info"
+    volumes:
+      - "./data:/data"
+    restart: unless-stopped
